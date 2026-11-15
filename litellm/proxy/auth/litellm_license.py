@@ -4,7 +4,7 @@ import base64
 import json
 import os
 from datetime import datetime
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
 import httpx
 from pydantic import TypeAdapter
@@ -12,15 +12,20 @@ from pydantic import TypeAdapter
 from litellm._logging import verbose_proxy_logger
 from litellm.constants import NON_LLM_CONNECTION_TIMEOUT
 from litellm.llms.custom_httpx.http_handler import HTTPHandler
-
-if TYPE_CHECKING:
-    from litellm.proxy._types import EnterpriseLicenseData
-
+from litellm.proxy._types import EnterpriseLicenseData
 
 AUTO_ROUTER_LICENSE_FEATURE: Final = "auto_router"
 LICENSE_ALL_FEATURES: Final = "*"
 AUTO_ROUTER_LICENSE_REMEDY: Final = "A LiteLLM license with the 'auto_router' feature lifts the limit."
 _LICENSE_VERDICT: Final = TypeAdapter(object)
+# Dev/test only: the enterprise license allows unlicensed use only for development and testing.
+DEV_LICENSE_ENV: Final = "LITELLM_DEV_LICENSE"
+DEV_LICENSE_USER_ID_ENV: Final = "LITELLM_DEV_LICENSE_USER_ID"
+DEV_LICENSE_EXPIRATION_DATE_ENV: Final = "LITELLM_DEV_LICENSE_EXPIRATION_DATE"
+
+
+def _dev_license_enabled() -> bool:
+    return os.getenv(DEV_LICENSE_ENV, "").strip().lower() in ("1", "true", "yes")
 
 
 class LicenseCheck:
@@ -103,6 +108,20 @@ class LicenseCheck:
         2. _verify: checks if license is valid calling litellm API. This is the old way we were generating/validating license
         """
         try:
+            if _dev_license_enabled():
+                if not self._premium_check_logged:
+                    verbose_proxy_logger.warning(
+                        "%s is set: enterprise features enabled by a local development license. Development and testing only.",
+                        DEV_LICENSE_ENV,
+                    )
+                    self._premium_check_logged = True
+                self.airgapped_license_data = EnterpriseLicenseData(
+                    user_id=os.getenv(DEV_LICENSE_USER_ID_ENV, "local-dev"),
+                    expiration_date=os.getenv(DEV_LICENSE_EXPIRATION_DATE_ENV, "9999-12-31"),
+                    allowed_features=[LICENSE_ALL_FEATURES],
+                )
+                return True
+
             if not self._premium_check_logged:
                 verbose_proxy_logger.debug(
                     "litellm.proxy.auth.litellm_license.py::is_premium() - ENTERING 'IS_PREMIUM' - License configured: %s",
