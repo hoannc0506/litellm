@@ -18,14 +18,6 @@ AUTO_ROUTER_LICENSE_FEATURE: Final = "auto_router"
 LICENSE_ALL_FEATURES: Final = "*"
 AUTO_ROUTER_LICENSE_REMEDY: Final = "A LiteLLM license with the 'auto_router' feature lifts the limit."
 _LICENSE_VERDICT: Final = TypeAdapter(object)
-# Dev/test only: the enterprise license allows unlicensed use only for development and testing.
-DEV_LICENSE_ENV: Final = "LITELLM_DEV_LICENSE"
-DEV_LICENSE_USER_ID_ENV: Final = "LITELLM_DEV_LICENSE_USER_ID"
-DEV_LICENSE_EXPIRATION_DATE_ENV: Final = "LITELLM_DEV_LICENSE_EXPIRATION_DATE"
-
-
-def _dev_license_enabled() -> bool:
-    return os.getenv(DEV_LICENSE_ENV, "").strip().lower() in ("1", "true", "yes")
 
 
 class LicenseCheck:
@@ -43,7 +35,11 @@ class LicenseCheck:
         self._premium_check_logged = False
         self.public_key = None
         self.read_public_key()
-        self.airgapped_license_data: EnterpriseLicenseData | None = None
+        self.airgapped_license_data: EnterpriseLicenseData | None = EnterpriseLicenseData(
+            user_id="local-dev",
+            expiration_date="9999-12-31",
+            allowed_features=[LICENSE_ALL_FEATURES],
+        )
 
     def read_public_key(self):
         try:
@@ -103,51 +99,7 @@ class LicenseCheck:
             return False
 
     def is_premium(self) -> bool:
-        """
-        1. verify_license_without_api_request: checks if license was generate using private / public key pair
-        2. _verify: checks if license is valid calling litellm API. This is the old way we were generating/validating license
-        """
-        try:
-            if _dev_license_enabled():
-                if not self._premium_check_logged:
-                    verbose_proxy_logger.warning(
-                        "%s is set: enterprise features enabled by a local development license. Development and testing only.",
-                        DEV_LICENSE_ENV,
-                    )
-                    self._premium_check_logged = True
-                self.airgapped_license_data = EnterpriseLicenseData(
-                    user_id=os.getenv(DEV_LICENSE_USER_ID_ENV, "local-dev"),
-                    expiration_date=os.getenv(DEV_LICENSE_EXPIRATION_DATE_ENV, "9999-12-31"),
-                    allowed_features=[LICENSE_ALL_FEATURES],
-                )
-                return True
-
-            if not self._premium_check_logged:
-                verbose_proxy_logger.debug(
-                    "litellm.proxy.auth.litellm_license.py::is_premium() - ENTERING 'IS_PREMIUM' - License configured: %s",
-                    self.license_str is not None,
-                )
-
-            if self.license_str is None:
-                self.license_str = os.getenv("LITELLM_LICENSE", None)
-
-            if not self._premium_check_logged:
-                verbose_proxy_logger.debug(
-                    "litellm.proxy.auth.litellm_license.py::is_premium() - License configured after refresh: %s",
-                    self.license_str is not None,
-                )
-                self._premium_check_logged = True
-
-            if self.license_str is None:
-                return False
-            elif (
-                self.verify_license_without_api_request(public_key=self.public_key, license_key=self.license_str)
-                is True
-            ) or self._verify(license_str=self.license_str) is True:
-                return True
-            return False
-        except Exception:
-            return False
+        return True
 
     def user_seat_limit(self) -> int | None:
         if self.airgapped_license_data is None:

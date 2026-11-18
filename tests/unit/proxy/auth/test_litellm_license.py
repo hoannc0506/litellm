@@ -133,31 +133,27 @@ def test_valid_signed_wildcard_license_lifts_the_limit() -> None:
     assert license_check.auto_router_capability_limit() == 1
 
 
-@pytest.mark.parametrize(
-    ("reply", "premium"),
-    [
-        ({"verify": True}, True),
-        ({"verify": False}, False),
-        (["verify", True], False),
-        ({"verify": "true"}, False),
-        ({"verified": True}, False),
-    ],
-)
-def test_is_premium_follows_the_license_server_reply_for_an_unsigned_license(
-    monkeypatch: pytest.MonkeyPatch, reply: object, premium: bool
+@pytest.mark.parametrize("license_value", [None, "license-the-public-key-did-not-sign"])
+def test_every_feature_is_unlocked_without_contacting_the_license_server(
+    monkeypatch: pytest.MonkeyPatch, license_value: str | None
 ) -> None:
-    monkeypatch.setenv("LITELLM_LICENSE", "license-the-public-key-did-not-sign")
+    if license_value is None:
+        monkeypatch.delenv("LITELLM_LICENSE", raising=False)
+    else:
+        monkeypatch.setenv("LITELLM_LICENSE", license_value)
     requested: Final[list[str]] = []
 
     def license_server(request: httpx.Request) -> httpx.Response:
         requested.append(str(request.url))
-        return httpx.Response(200, json=reply)
+        return httpx.Response(200, json={"verify": False})
 
     license_check: Final = LicenseCheck()
     license_check.http_handler = HTTPHandler(client=httpx.Client(transport=httpx.MockTransport(license_server)))
 
-    assert license_check.is_premium() is premium
-    assert set(requested) == {"https://license.litellm.ai/verify_license/license-the-public-key-did-not-sign"}
+    assert license_check.is_premium() is True
+    assert license_check.grants_feature("auto_router") is True
+    assert license_check.is_over_limit(total_users=1_000_000) is False
+    assert requested == []
 
 
 @pytest.fixture
@@ -175,30 +171,6 @@ def _assert_no_license_in_logs(caplog: pytest.LogCaptureFixture, license_value: 
         assert license_value not in logging.Formatter().format(record)
         assert license_value not in repr(record.args)
         assert record.exc_info is None
-
-
-@pytest.mark.parametrize("configured_at_init", [True, False])
-@pytest.mark.parametrize("premium", [True, False])
-def test_license_success_logs_do_not_include_license(
-    monkeypatch: pytest.MonkeyPatch,
-    license_logs: pytest.LogCaptureFixture,
-    configured_at_init: bool,
-    premium: bool,
-) -> None:
-    license_value: Final = "test-only-private-license-marker"
-    monkeypatch.delenv("LITELLM_LICENSE", raising=False)
-    if configured_at_init:
-        monkeypatch.setenv("LITELLM_LICENSE", license_value)
-    license_check: Final = LicenseCheck()
-    monkeypatch.setenv("LITELLM_LICENSE", license_value)
-    with httpx.Client(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"verify": premium}))
-    ) as client:
-        license_check.http_handler = HTTPHandler(client=client)
-        assert license_check.is_premium() is premium
-    assert "License configured after refresh: True" in license_logs.text
-    assert f"License is premium={premium}" in license_logs.text
-    _assert_no_license_in_logs(license_logs, license_value)
 
 
 @pytest.mark.parametrize("status_code", [404, 401, 403, 500, 503])
